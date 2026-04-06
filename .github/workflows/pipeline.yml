@@ -1,0 +1,77 @@
+# .github/workflows/pipeline.yml
+name: ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  MLFLOW_TRACKING_URI:  sqlite:///mlflow.db
+  DAGSHUB_USERNAME:     ${{ secrets.DAGSHUB_USERNAME }}
+  DAGSHUB_TOKEN:        ${{ secrets.DAGSHUB_TOKEN }}
+  HF_TOKEN:             ${{ secrets.HF_TOKEN }}
+  HF_USERNAME:          ${{ secrets.DAGSHUB_USERNAME }}
+
+jobs:
+  # ── Job 1: Run tests ────────────────────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Tests
+        run: pytest tests/ -v --tb=short
+
+  # ── Job 2: Train + deploy (only on main after tests pass) ──────────────────
+  train-and-deploy:
+    name: Train and Deploy
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Training & MLflow Logging
+        run: python src/train.py
+
+      - name: Run Evaluation
+        run: python src/evaluate.py
+
+      - name: Promote best model to Production
+        run: python src/registry.py
+
+      - name: Deploy to HuggingFace
+        if: success()
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python src/deploy.py
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: best-model-${{ github.run_number }}
+          path: models/best_model_info.json

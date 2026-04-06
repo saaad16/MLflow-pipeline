@@ -1,0 +1,47 @@
+name: Scheduled Retraining
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for retraining"
+        required: false
+        default: "manual"
+
+jobs:
+  retrain:
+    name: Auto Retrain
+    runs-on: ubuntu-latest
+    env:
+      MLFLOW_TRACKING_URI: "sqlite:///mlflow.db"
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_USERNAME: ${{ secrets.HF_USERNAME }}
+      RETRAIN_TRIGGER: ${{ github.event.inputs.reason || 'scheduled' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Tests First
+        run: pytest tests/ -v --tb=short
+
+      - name: Run Retraining
+        run: python src/retrain.py
+
+      - name: Deploy if improved
+        run: python src/deploy.py
+
+      - name: Upload retrain results
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrain-${{ github.run_number }}
+          path: models/
